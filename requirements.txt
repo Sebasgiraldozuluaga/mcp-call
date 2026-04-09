@@ -1,0 +1,10 @@
+anthropic[mcp]
+fastapi
+uvicorn[standard]
+twilio
+elevenlabs
+python-dotenv
+numpy
+httpx
+gtts
+pydub
