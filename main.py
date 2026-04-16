@@ -107,22 +107,35 @@ async def media_stream(websocket: WebSocket):
     conversation_history: list = []
     silent_chunks = 0
     speaking = False
-    busy = asyncio.Event()  # Evita procesar mientras el agente responde
+    busy = asyncio.Event()    # True mientras procesa (STT + agente + TTS)
+    playing = asyncio.Event() # True solo durante la reproducción de TTS
+    current_task: asyncio.Task | None = None
+    task_gen = 0  # Contador de generación: evita que un finally obsoleto limpie busy
 
-    async def handle_speech(captured: bytes):
+    async def handle_speech(captured: bytes, gen: int):
         """Transcribe, consulta al agente y responde con TTS."""
         try:
             user_text = await transcribe(captured)
             if not user_text or len(user_text.strip()) < 3:
                 return
             print(f"Usuario: {user_text}")
+
             response_text = await get_agent_response(user_text, conversation_history)
             print(f"Agente:  {response_text}")
+
+            playing.set()
             await send_tts(websocket, stream_sid, response_text)
+
+        except asyncio.CancelledError:
+            print("[barge-in] Respuesta del agente cancelada por el usuario")
+            raise  # Necesario para que asyncio marque la tarea como cancelada
         except Exception as e:
             print(f"Error en handle_speech: {e}")
         finally:
-            busy.clear()
+            playing.clear()
+            # Solo limpiar busy si somos la tarea activa (no una cancelada por barge-in)
+            if task_gen == gen:
+                busy.clear()
 
     try:
         async for raw in websocket.iter_text():
@@ -139,36 +152,53 @@ async def media_stream(websocket: WebSocket):
                 )
 
             # ── Chunks de audio entrante ───────────────────────────────────
-            elif event == "media" and not busy.is_set():
+            elif event == "media":
                 mulaw_chunk = base64.b64decode(data["media"]["payload"])
                 pcm_chunk = mulaw_decode(mulaw_chunk)
                 rms = compute_rms(pcm_chunk)
 
-                if rms > SILENCE_THRESHOLD:
-                    # El usuario está hablando
+                # ── Barge-in: usuario habla mientras el agente reproduce TTS ──
+                if playing.is_set() and rms > SILENCE_THRESHOLD:
+                    task_gen += 1
+                    if current_task and not current_task.done():
+                        current_task.cancel()
+                    playing.clear()
+                    busy.clear()
+                    # Decirle a Twilio que descarte el audio en cola
+                    if stream_sid:
+                        await websocket.send_json({"event": "clear", "streamSid": stream_sid})
+                    print("[barge-in] Usuario interrumpió — escuchando nueva pregunta")
                     speaking = True
                     silent_chunks = 0
-                    audio_buffer.extend(mulaw_chunk)
+                    audio_buffer.clear()
 
-                elif speaking:
-                    # Silencio tras voz detectada
-                    silent_chunks += 1
-                    audio_buffer.extend(mulaw_chunk)
+                # ── VAD normal (solo cuando no estamos procesando) ─────────
+                if not busy.is_set():
+                    if rms > SILENCE_THRESHOLD:
+                        speaking = True
+                        silent_chunks = 0
+                        audio_buffer.extend(mulaw_chunk)
 
-                    if silent_chunks >= SILENCE_CHUNKS:
-                        if len(audio_buffer) > MIN_SPEECH_CHUNKS * CHUNK_BYTES:
-                            # Audio válido → procesar
-                            captured = bytes(audio_buffer)
-                            audio_buffer.clear()
-                            speaking = False
-                            silent_chunks = 0
-                            busy.set()
-                            asyncio.create_task(handle_speech(captured))
-                        else:
-                            # Demasiado corto → descartar
-                            audio_buffer.clear()
-                            speaking = False
-                            silent_chunks = 0
+                    elif speaking:
+                        silent_chunks += 1
+                        audio_buffer.extend(mulaw_chunk)
+
+                        if silent_chunks >= SILENCE_CHUNKS:
+                            if len(audio_buffer) > MIN_SPEECH_CHUNKS * CHUNK_BYTES:
+                                # Audio válido → procesar
+                                captured = bytes(audio_buffer)
+                                audio_buffer.clear()
+                                speaking = False
+                                silent_chunks = 0
+                                busy.set()
+                                current_task = asyncio.create_task(
+                                    handle_speech(captured, task_gen)
+                                )
+                            else:
+                                # Demasiado corto → descartar
+                                audio_buffer.clear()
+                                speaking = False
+                                silent_chunks = 0
 
             # ── Fin del stream ─────────────────────────────────────────────
             elif event == "stop":
