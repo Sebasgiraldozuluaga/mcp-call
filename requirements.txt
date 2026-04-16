@@ -5,7 +5,9 @@ twilio
 elevenlabs
 python-dotenv
 numpy
+scipy
 httpx
 gtts
 pydub
 num2words
+python-telegram-bot

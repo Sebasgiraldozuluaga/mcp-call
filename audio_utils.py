@@ -57,25 +57,23 @@ def compute_rms(pcm_bytes: bytes) -> float:
 
 
 def mulaw_to_wav(mulaw_bytes: bytes, sample_rate: int = 8000) -> bytes:
-    """Convierte bytes μ-law 8 kHz a WAV PCM 16 bits a 16 kHz.
+    """Convierte bytes μ-law 8 kHz a WAV PCM 16 bits a 16 kHz para STT.
 
-    El upsampleo 8 kHz → 16 kHz y la normalización de amplitud mejoran
-    significativamente la precisión de los modelos STT, que están entrenados
-    principalmente con audio a 16 kHz.
+    Pipeline mínimo: decodificar, upsamplear, normalizar. Sin filtros agresivos
+    que distorsionen la señal — los modelos STT modernos manejan ruido internamente.
     """
     pcm = mulaw_decode(mulaw_bytes)
     samples = np.frombuffer(pcm, dtype=np.int16).astype(np.float32)
 
-    # ── Upsampleo lineal 8 kHz → 16 kHz ──────────────────────────────────────
+    # Upsampleo lineal 8 kHz → 16 kHz
     n_original = len(samples)
-    n_upsampled = n_original * 2
     samples = np.interp(
-        np.linspace(0, n_original - 1, n_upsampled),
+        np.linspace(0, n_original - 1, n_original * 2),
         np.arange(n_original),
         samples,
     )
 
-    # ── Normalización de amplitud (hasta 85 % del rango) ─────────────────────
+    # Normalización suave (85% del rango)
     peak = np.abs(samples).max()
     if peak > 0:
         samples = samples * (0.85 * 32767.0 / peak)
@@ -85,7 +83,7 @@ def mulaw_to_wav(mulaw_bytes: bytes, sample_rate: int = 8000) -> bytes:
     with wave.open(buf, "wb") as wf:
         wf.setnchannels(1)
         wf.setsampwidth(2)
-        wf.setframerate(16000)   # ElevenLabs Scribe prefiere 16 kHz
+        wf.setframerate(16000)
         wf.writeframes(pcm_out)
     return buf.getvalue()
 

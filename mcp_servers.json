@@ -1,0 +1,13 @@
+{
+  "servers": {
+    "postgres": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-postgres"],
+      "env": {
+        "NODE_TLS_REJECT_UNAUTHORIZED": "0"
+      },
+      "append_env_var": "DATABASE_URL",
+      "ssl_mode": "require"
+    }
+  }
+}
