@@ -280,7 +280,7 @@ async def media_stream(websocket: WebSocket, call_sid: str = Query("")):
     # Recuperar o crear sesión vinculada a esta llamada
     print(f"[WebSocket] call_sid='{call_sid}' pending_keys={list(_pending_calls.keys())}")
     session: CallSession = _pending_calls.pop(call_sid, None) or CallSession(
-        chat_id=None, phone_number="desconocido", call_sid=call_sid
+        chat_id=TELEGRAM_ALLOWED_ID, phone_number=os.environ.get("YOUR_PHONE_NUMBER", "desconocido"), call_sid=call_sid
     )
 
     stream_sid: str | None = None
