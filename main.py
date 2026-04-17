@@ -254,11 +254,13 @@ async def twiml_response(request: Request):
     server_url = os.environ["SERVER_URL"]
     ws_url = server_url.replace("https://", "wss://").replace("http://", "ws://")
 
-    # Twilio envía CallSid en el body del POST; lo pasamos al WebSocket
+    # Twilio envía CallSid en POST (form) o GET (query params)
     call_sid = ""
     if request.method == "POST":
         form = await request.form()
         call_sid = form.get("CallSid", "")
+    if not call_sid:
+        call_sid = request.query_params.get("CallSid", "")
 
     response = VoiceResponse()
     connect = Connect()
