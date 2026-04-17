@@ -106,15 +106,15 @@ async def _send_call_summary(session: CallSession) -> None:
     msg = (
         f"📞 *Llamada finalizada* — `{session.phone_number}`\n\n"
         f"🤖 *Claude Sonnet 4\\.6*\n"
-        f"  • Input: `{input_tokens:,}` tokens \\(~\\${_md_float(cost_input)}\\)\n"
-        f"  • Output: `{output_tokens:,}` tokens \\(~\\${_md_float(cost_output)}\\)\n\n"
+        f"  • Input: `{input_tokens:,}` tokens \\(\\~\\${_md_float(cost_input)}\\)\n"
+        f"  • Output: `{output_tokens:,}` tokens \\(\\~\\${_md_float(cost_output)}\\)\n\n"
         f"🎤 *ElevenLabs STT \\(Scribe v1\\)*\n"
-        f"  • Audio: `{_md_float(stt_seconds, '.1f')}s` \\(~\\${_md_float(cost_stt)}\\)\n\n"
+        f"  • Audio: `{_md_float(stt_seconds, '.1f')}s` \\(\\~\\${_md_float(cost_stt)}\\)\n\n"
         f"🔊 *ElevenLabs TTS \\(Turbo v2\\.5\\)*\n"
-        f"  • Caracteres: `{tts_chars:,}` \\(~\\${_md_float(cost_tts)}\\)\n\n"
+        f"  • Caracteres: `{tts_chars:,}` \\(\\~\\${_md_float(cost_tts)}\\)\n\n"
         f"📱 *Twilio \\(llamada saliente Colombia móvil\\)*\n"
-        f"  • Duración: `{secs_str}s` → {mins_str} min facturado \\(~\\${_md_float(cost_twilio)}\\)\n\n"
-        f"💰 *Costo total estimado: ~\\${_md_float(total)} USD*"
+        f"  • Duración: `{secs_str}s` → {mins_str} min facturado \\(\\~\\${_md_float(cost_twilio)}\\)\n\n"
+        f"💰 *Costo total estimado: \\~\\${_md_float(total)} USD*"
     )
     try:
         await telegram_app.bot.send_message(
