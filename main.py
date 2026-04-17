@@ -75,8 +75,8 @@ _STT_PRICE_PER_SEC   = 0.40 / 3_600       # ElevenLabs Scribe v1 ($0.40/hora)
 _TWILIO_PRICE_PER_SEC = 0.048 / 60        # $0.048/min → por segundo
 
 
-def _fc(value: float, fmt: str = ".4f") -> str:
-    """Formatea un float para MarkdownV2 escapando el punto decimal."""
+def _md_float(value: float, fmt: str = ".4f") -> str:
+    """Escapa el punto decimal de un float para MarkdownV2 ('.' → '\\.')."""
     return format(value, fmt).replace(".", "\\.")
 
 
@@ -86,37 +86,35 @@ async def _send_call_summary(session: CallSession) -> None:
     if not session.chat_id or not telegram_app:
         return
 
-    ci = session.claude_input_tokens
-    co = session.claude_output_tokens
-    tc = session.tts_chars
-    sa = session.stt_audio_seconds
-    # Twilio redondea al minuto; simulamos ceil al minuto más cercano
-    twilio_mins = math.ceil(session.call_duration_seconds / 60)
-    twilio_secs = session.call_duration_seconds
+    input_tokens  = session.claude_input_tokens
+    output_tokens = session.claude_output_tokens
+    tts_chars     = session.tts_chars
+    stt_seconds   = session.stt_audio_seconds
+    twilio_mins   = math.ceil(session.call_duration_seconds / 60)
+    twilio_secs   = session.call_duration_seconds
 
-    cost_ci     = ci * _CLAUDE_INPUT_PRICE
-    cost_co     = co * _CLAUDE_OUTPUT_PRICE
-    cost_tts    = tc * _TTS_PRICE_PER_CHAR
-    cost_stt    = sa * _STT_PRICE_PER_SEC
-    cost_twilio = twilio_mins * 0.048
-    total       = cost_ci + cost_co + cost_tts + cost_stt + cost_twilio
+    cost_input  = input_tokens  * _CLAUDE_INPUT_PRICE
+    cost_output = output_tokens * _CLAUDE_OUTPUT_PRICE
+    cost_tts    = tts_chars     * _TTS_PRICE_PER_CHAR
+    cost_stt    = stt_seconds   * _STT_PRICE_PER_SEC
+    cost_twilio = twilio_mins   * 0.048
+    total       = cost_input + cost_output + cost_tts + cost_stt + cost_twilio
 
     mins_str = str(twilio_mins).replace("-", "\\-")
     secs_str = f"{twilio_secs:.0f}".replace("-", "\\-")
-    sa_str   = _fc(sa, ".1f")
 
     msg = (
         f"📞 *Llamada finalizada* — `{session.phone_number}`\n\n"
         f"🤖 *Claude Sonnet 4\\.6*\n"
-        f"  • Input: `{ci:,}` tokens \\(~\\${_fc(cost_ci)}\\)\n"
-        f"  • Output: `{co:,}` tokens \\(~\\${_fc(cost_co)}\\)\n\n"
+        f"  • Input: `{input_tokens:,}` tokens \\(~\\${_md_float(cost_input)}\\)\n"
+        f"  • Output: `{output_tokens:,}` tokens \\(~\\${_md_float(cost_output)}\\)\n\n"
         f"🎤 *ElevenLabs STT \\(Scribe v1\\)*\n"
-        f"  • Audio: `{sa_str}s` \\(~\\${_fc(cost_stt)}\\)\n\n"
+        f"  • Audio: `{_md_float(stt_seconds, '.1f')}s` \\(~\\${_md_float(cost_stt)}\\)\n\n"
         f"🔊 *ElevenLabs TTS \\(Turbo v2\\.5\\)*\n"
-        f"  • Caracteres: `{tc:,}` \\(~\\${_fc(cost_tts)}\\)\n\n"
+        f"  • Caracteres: `{tts_chars:,}` \\(~\\${_md_float(cost_tts)}\\)\n\n"
         f"📱 *Twilio \\(llamada saliente Colombia móvil\\)*\n"
-        f"  • Duración: `{secs_str}s` → {mins_str} min facturado \\(~\\${_fc(cost_twilio)}\\)\n\n"
-        f"💰 *Costo total estimado: ~\\${_fc(total)} USD*"
+        f"  • Duración: `{secs_str}s` → {mins_str} min facturado \\(~\\${_md_float(cost_twilio)}\\)\n\n"
+        f"💰 *Costo total estimado: ~\\${_md_float(total)} USD*"
     )
     try:
         await telegram_app.bot.send_message(
