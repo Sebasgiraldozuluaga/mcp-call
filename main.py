@@ -232,10 +232,16 @@ async def telegram_webhook(request: Request):
 async def start_call():
     """Inicia una llamada saliente a YOUR_PHONE_NUMBER."""
     server_url = os.environ["SERVER_URL"]
+    phone_number = os.environ["YOUR_PHONE_NUMBER"]
     call = twilio.calls.create(
         url=f"{server_url}/twiml",
-        to=os.environ["YOUR_PHONE_NUMBER"],
+        to=phone_number,
         from_=os.environ["TWILIO_PHONE_NUMBER"],
+    )
+    _pending_calls[call.sid] = CallSession(
+        chat_id=TELEGRAM_ALLOWED_ID,
+        phone_number=phone_number,
+        call_sid=call.sid,
     )
     print(f"Llamada iniciada: {call.sid}")
     return JSONResponse({"call_sid": call.sid, "status": call.status})
