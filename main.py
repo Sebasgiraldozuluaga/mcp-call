@@ -77,6 +77,7 @@ _TWILIO_PRICE_PER_SEC = 0.048 / 60        # $0.048/min → por segundo
 
 async def _send_call_summary(session: CallSession) -> None:
     """Envía resumen de tokens y costo estimado al chat de Telegram que inició la llamada."""
+    print(f"[Telegram] chat_id={session.chat_id} telegram_app={telegram_app is not None}")
     if not session.chat_id or not telegram_app:
         return
 
@@ -275,6 +276,7 @@ async def media_stream(websocket: WebSocket, call_sid: str = Query("")):
     print("WebSocket conectado")
 
     # Recuperar o crear sesión vinculada a esta llamada
+    print(f"[WebSocket] call_sid='{call_sid}' pending_keys={list(_pending_calls.keys())}")
     session: CallSession = _pending_calls.pop(call_sid, None) or CallSession(
         chat_id=None, phone_number="desconocido", call_sid=call_sid
     )
