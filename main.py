@@ -75,6 +75,11 @@ _STT_PRICE_PER_SEC   = 0.40 / 3_600       # ElevenLabs Scribe v1 ($0.40/hora)
 _TWILIO_PRICE_PER_SEC = 0.048 / 60        # $0.048/min → por segundo
 
 
+def _fc(value: float, fmt: str = ".4f") -> str:
+    """Formatea un float para MarkdownV2 escapando el punto decimal."""
+    return format(value, fmt).replace(".", "\\.")
+
+
 async def _send_call_summary(session: CallSession) -> None:
     """Envía resumen de tokens y costo estimado al chat de Telegram que inició la llamada."""
     print(f"[Telegram] chat_id={session.chat_id} telegram_app={telegram_app is not None}")
@@ -93,24 +98,25 @@ async def _send_call_summary(session: CallSession) -> None:
     cost_co     = co * _CLAUDE_OUTPUT_PRICE
     cost_tts    = tc * _TTS_PRICE_PER_CHAR
     cost_stt    = sa * _STT_PRICE_PER_SEC
-    cost_twilio = twilio_mins * 0.048   # Twilio cobra por minuto entero
+    cost_twilio = twilio_mins * 0.048
     total       = cost_ci + cost_co + cost_tts + cost_stt + cost_twilio
 
     mins_str = str(twilio_mins).replace("-", "\\-")
     secs_str = f"{twilio_secs:.0f}".replace("-", "\\-")
+    sa_str   = _fc(sa, ".1f")
 
     msg = (
         f"📞 *Llamada finalizada* — `{session.phone_number}`\n\n"
         f"🤖 *Claude Sonnet 4\\.6*\n"
-        f"  • Input: `{ci:,}` tokens \\(~\\${cost_ci:.4f}\\)\n"
-        f"  • Output: `{co:,}` tokens \\(~\\${cost_co:.4f}\\)\n\n"
+        f"  • Input: `{ci:,}` tokens \\(~\\${_fc(cost_ci)}\\)\n"
+        f"  • Output: `{co:,}` tokens \\(~\\${_fc(cost_co)}\\)\n\n"
         f"🎤 *ElevenLabs STT \\(Scribe v1\\)*\n"
-        f"  • Audio: `{sa:.1f}s` \\(~\\${cost_stt:.4f}\\)\n\n"
+        f"  • Audio: `{sa_str}s` \\(~\\${_fc(cost_stt)}\\)\n\n"
         f"🔊 *ElevenLabs TTS \\(Turbo v2\\.5\\)*\n"
-        f"  • Caracteres: `{tc:,}` \\(~\\${cost_tts:.4f}\\)\n\n"
+        f"  • Caracteres: `{tc:,}` \\(~\\${_fc(cost_tts)}\\)\n\n"
         f"📱 *Twilio \\(llamada saliente Colombia móvil\\)*\n"
-        f"  • Duración: `{secs_str}s` → {mins_str} min facturado \\(~\\${cost_twilio:.4f}\\)\n\n"
-        f"💰 *Costo total estimado: ~\\${total:.4f} USD*"
+        f"  • Duración: `{secs_str}s` → {mins_str} min facturado \\(~\\${_fc(cost_twilio)}\\)\n\n"
+        f"💰 *Costo total estimado: ~\\${_fc(total)} USD*"
     )
     try:
         await telegram_app.bot.send_message(
@@ -338,6 +344,14 @@ async def media_stream(websocket: WebSocket, call_sid: str = Query("")):
             # ── Inicio del stream ──────────────────────────────────────────
             if event == "start":
                 stream_sid = data["start"]["streamSid"]
+                # Twilio siempre incluye callSid en el evento start.
+                # Si el WebSocket llegó con call_sid vacío, recuperamos la sesión real aquí.
+                twilio_call_sid = data["start"].get("callSid", "")
+                if twilio_call_sid and twilio_call_sid != session.call_sid:
+                    recovered = _pending_calls.pop(twilio_call_sid, None)
+                    if recovered:
+                        session = recovered
+                        print(f"[Sesión] Recuperada desde evento start: {twilio_call_sid}")
                 call_start_time = asyncio.get_event_loop().time()
                 print(f"Stream iniciado: {stream_sid}")
                 greeting = "Hola! Soy tu asistente con acceso a la base de datos. ¿En qué te puedo ayudar?"
