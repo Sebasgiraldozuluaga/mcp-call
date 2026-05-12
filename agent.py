@@ -22,6 +22,52 @@ from num2words import num2words
 
 async_client = AsyncAnthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
 
+# Chunker de oraciones para streaming TTS
+_CHUNK_HARD_PUNCT = frozenset('.?!')   # corte fuerte, mínimo 15 chars
+_CHUNK_SOFT_PUNCT = frozenset(',;')    # corte suave, mínimo 30 chars
+_CHUNK_MIN_HARD   = 15
+_CHUNK_MIN_SOFT   = 30
+
+
+def _chunk_text(buffer: str, flush: bool = False) -> tuple[list[str], str]:
+    """Divide el buffer en chunks listos para TTS y retorna el resto.
+
+    Corta en:
+    - . ? !  si el buffer hasta ese punto tiene >= 15 chars
+    - , ;    si el buffer hasta ese punto tiene >= 30 chars
+
+    Si flush=True, retorna todo el buffer como un chunk (aunque no tenga puntuación).
+
+    Returns:
+        (chunks, resto) donde chunks es lista de segmentos listos para TTS
+        y resto es el texto que aún no tiene suficiente puntuación.
+    """
+    chunks: list[str] = []
+    pos = 0
+    start = 0
+
+    while pos < len(buffer):
+        ch = buffer[pos]
+        segment_len = pos - start + 1
+
+        if ch in _CHUNK_HARD_PUNCT and segment_len >= _CHUNK_MIN_HARD:
+            chunks.append(buffer[start:pos + 1])
+            start = pos + 1
+        elif ch in _CHUNK_SOFT_PUNCT and segment_len >= _CHUNK_MIN_SOFT:
+            chunks.append(buffer[start:pos + 1])
+            start = pos + 1
+
+        pos += 1
+
+    resto = buffer[start:]
+
+    if flush and resto.strip():
+        chunks.append(resto)
+        resto = ""
+
+    return chunks, resto
+
+
 # Paso 1: dinero con $ → "X pesos"
 _MONEY_RE = re.compile(r'\$\s*([\d.,]+)')
 # Paso 2: cualquier número restante → palabras (sin "pesos")
