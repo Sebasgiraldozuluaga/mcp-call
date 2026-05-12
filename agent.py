@@ -85,8 +85,7 @@ def _parse_number(raw: str) -> int | None:
     clean = raw.strip()
     # Detect Colombian/European format: dots as thousands separators only
     # Pattern: digits in groups of 3 separated by dots, no trailing decimals
-    import re as _re
-    if _re.match(r'^\d{1,3}(\.\d{3})+$', clean):
+    if re.match(r'^\d{1,3}(\.\d{3})+$', clean):
         return int(clean.replace('.', ''))
     # Remove trailing decimal part (.XX or ,XX where XX is 1-2 digits)
     clean = re.sub(r'[.,]\d{1,2}$', '', clean)
@@ -105,7 +104,7 @@ def _approx_for_tts(valor: int) -> str:
     < 10.000      → exacto                            → "cuatro mil quinientos"
     """
     if valor >= 1_000_000:
-        centenas = round(valor / 100_000)
+        centenas = valor // 100_000  # floor, not round — prevents crossing million boundaries
         millones_enteros = centenas // 10
         resto_centenas = centenas % 10
         if resto_centenas == 0:
