@@ -372,12 +372,29 @@ async def media_stream(websocket: WebSocket, call_sid: str = Query("")):
                 session.claude_output_tokens += out_tok
                 # Actualizar historial ORIGINAL (no el trimmed copy) para mantener contexto
                 if assistant_content is not None:
-                    # Serialize Pydantic SDK blocks to plain dicts before storing
+                    # Serialize Pydantic SDK blocks to plain dicts before storing.
+                    # model_dump() includes internal SDK fields (e.g. parsed_output)
+                    # that Anthropic's API rejects as "extra inputs". Extract only the
+                    # fields the API actually accepts for each block type.
                     if isinstance(assistant_content, list):
-                        assistant_content = [
-                            b.model_dump() if hasattr(b, "model_dump") else b
-                            for b in assistant_content
-                        ]
+                        def _serialize_block(b):
+                            if not hasattr(b, "model_dump"):
+                                return b
+                            d = b.model_dump()
+                            block_type = d.get("type")
+                            if block_type == "text":
+                                return {"type": "text", "text": d["text"]}
+                            elif block_type == "tool_use":
+                                return {
+                                    "type": "tool_use",
+                                    "id": d["id"],
+                                    "name": d["name"],
+                                    "input": d["input"],
+                                }
+                            # Fallback: keep only known-safe top-level keys
+                            return {k: v for k, v in d.items()
+                                    if k in {"type", "text", "id", "name", "input"}}
+                        assistant_content = [_serialize_block(b) for b in assistant_content]
                     conversation_history.append({"role": "user", "content": user_text})
                     conversation_history.append({"role": "assistant", "content": assistant_content})
             except asyncio.TimeoutError:
