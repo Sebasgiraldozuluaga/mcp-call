@@ -38,6 +38,10 @@ def _chunk_text(buffer: str, flush: bool = False) -> tuple[list[str], str]:
     - . ? !  si el buffer hasta ese punto tiene >= 15 chars
     - , ;    si el buffer hasta ese punto tiene >= 30 chars
 
+    NUNCA corta si el carácter siguiente (lookahead) es un dígito — esto previene
+    que un número con formato colombiano como "$1.018.370" se parta en "$1." + "018.370",
+    lo que causaría que format_for_tts lo convirtiera en "uno pesos" + "dieciocho mil...".
+
     Si flush=True, retorna todo el buffer como un chunk (aunque no tenga puntuación).
 
     Returns:
@@ -51,13 +55,18 @@ def _chunk_text(buffer: str, flush: bool = False) -> tuple[list[str], str]:
     while pos < len(buffer):
         ch = buffer[pos]
         segment_len = pos - start + 1
+        next_ch = buffer[pos + 1] if pos + 1 < len(buffer) else ""
 
         if ch in _CHUNK_HARD_PUNCT and segment_len >= _CHUNK_MIN_HARD:
-            chunks.append(buffer[start:pos + 1])
-            start = pos + 1
+            # No cortar si el siguiente carácter es un dígito (número incompleto)
+            if not next_ch.isdigit():
+                chunks.append(buffer[start:pos + 1])
+                start = pos + 1
         elif ch in _CHUNK_SOFT_PUNCT and segment_len >= _CHUNK_MIN_SOFT:
-            chunks.append(buffer[start:pos + 1])
-            start = pos + 1
+            # No cortar si el siguiente carácter es un dígito (número incompleto)
+            if not next_ch.isdigit():
+                chunks.append(buffer[start:pos + 1])
+                start = pos + 1
 
         pos += 1
 
@@ -425,7 +434,7 @@ async def get_agent_response_streaming(
     user_text: str,
     history: list,
     text_queue: asyncio.Queue,
-) -> tuple[int, int]:
+) -> tuple[int, int, list | None]:
     """Consulta Claude en modo streaming y envía chunks de texto a text_queue.
 
     Mientras Claude genera texto, lo acumula en un buffer y lo corta en
@@ -437,13 +446,17 @@ async def get_agent_response_streaming(
     - None: fin de la respuesta (sentinel)
 
     Returns:
-        (input_tokens, output_tokens)
+        (input_tokens, output_tokens, assistant_content)
+        assistant_content es el contenido final del asistente para agregar al historial
+        original en main.py. None si hubo un error.
     """
     t_start = time.perf_counter()
     print(f"\n{'='*60}")
     print(f"[Agente streaming] Pregunta: {user_text!r}")
 
+    # El user_text se agrega al trimmed copy — el original se actualiza en main.py
     history.append({"role": "user", "content": user_text})
+    assistant_content = None
 
     buffer = ""
     total_input_tokens = 0
@@ -540,8 +553,8 @@ async def get_agent_response_streaming(
                 print(f"[TTS input] {_tts_in!r}")
                 await text_queue.put(_tts_in)
 
-        # Actualizar historial con respuesta completa
-        history.append({"role": "assistant", "content": final_msg.content})
+        # Actualizar historial con respuesta completa (guardamos para retornar a main.py)
+        assistant_content = final_msg.content
 
         t_total = time.perf_counter() - t_start
         print(f"[Agente streaming] Completado ({t_total:.2f}s) tokens in={total_input_tokens} out={total_output_tokens}")
@@ -554,4 +567,4 @@ async def get_agent_response_streaming(
     finally:
         await text_queue.put(None)  # sentinel de fin siempre
 
-    return total_input_tokens, total_output_tokens
+    return total_input_tokens, total_output_tokens, assistant_content

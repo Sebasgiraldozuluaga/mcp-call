@@ -341,47 +341,10 @@ async def media_stream(websocket: WebSocket, call_sid: str = Query("")):
             if not ws_open or not stream_sid:
                 return
 
-            # ── Feedback inmediato: tono local + "un momento" en background ──
             thinking_stop = asyncio.Event()
+            thinking_stop.set()  # ya seteado = sin tono ni "un momento"
             tts_stop.clear()
             playing.set()
-
-            # Lanzar tono de pensamiento local (instantáneo, sin red)
-            thinking_task = asyncio.create_task(
-                send_thinking_tone(websocket, stream_sid, thinking_stop)
-            )
-
-            # Lanzar TTS de "un momento" en background mientras Claude procesa
-            async def play_um():
-                """Genera y reproduce 'un momento' via TTS en background."""
-                try:
-                    um_bytes = await asyncio.to_thread(
-                        lambda: b"".join(elevenlabs.text_to_speech.convert(
-                            text="Un momento.",
-                            voice_id=os.environ["ELEVENLABS_VOICE_ID"],
-                            model_id="eleven_turbo_v2_5",
-                            output_format="ulaw_8000",
-                        ))
-                    )
-                    # Solo reproducir si el agente no respondió antes de que esto termine
-                    if not thinking_stop.is_set() and not tts_stop.is_set():
-                        thinking_stop.set()  # detener tono local
-                        await asyncio.sleep(0.05)  # pequeño gap
-                        for i in range(0, len(um_bytes), CHUNK_BYTES):
-                            if tts_stop.is_set():
-                                break
-                            chunk = um_bytes[i: i + CHUNK_BYTES]
-                            await websocket.send_json({
-                                "event": "media",
-                                "streamSid": stream_sid,
-                                "media": {"payload": base64.b64encode(chunk).decode()},
-                            })
-                        thinking_stop.set()  # asegurar que está seteado
-                except Exception as e:
-                    print(f"[un momento TTS] Error: {e}")
-                    thinking_stop.set()
-
-            um_task = asyncio.create_task(play_um())
 
             # ── Lanzar agente streaming ──
             text_queue: asyncio.Queue = asyncio.Queue()
@@ -396,24 +359,19 @@ async def media_stream(websocket: WebSocket, call_sid: str = Query("")):
                 thinking_stop=thinking_stop,
             )
 
-            # Obtener tokens del agente
+            # Obtener tokens del agente y actualizar historial original
             try:
-                in_tok, out_tok = await asyncio.wait_for(agent_task, timeout=60.0)
+                in_tok, out_tok, assistant_content = await asyncio.wait_for(agent_task, timeout=60.0)
                 session.claude_input_tokens += in_tok
                 session.claude_output_tokens += out_tok
+                # Actualizar historial ORIGINAL (no el trimmed copy) para mantener contexto
+                if assistant_content is not None:
+                    conversation_history.append({"role": "user", "content": user_text})
+                    conversation_history.append({"role": "assistant", "content": assistant_content})
             except asyncio.TimeoutError:
                 print("[handle_speech] Timeout esperando agente")
             except asyncio.CancelledError:
                 pass
-
-            # Cancelar tareas de feedback si aún corren
-            for t in (thinking_task, um_task):
-                if not t.done():
-                    t.cancel()
-                    try:
-                        await t
-                    except (asyncio.CancelledError, Exception):
-                        pass
 
         except asyncio.CancelledError:
             print("[barge-in] Respuesta del agente cancelada por el usuario")

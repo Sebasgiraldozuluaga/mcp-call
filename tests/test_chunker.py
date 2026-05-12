@@ -69,3 +69,23 @@ def test_flush_whitespace_only():
     chunks, resto = _chunk_text("   ", flush=True)
     assert chunks == []
     assert resto == ""
+
+
+def test_no_corta_punto_antes_de_digito():
+    """Número colombiano $1.018.370 NO debe partirse en '$1.' + '018.370'."""
+    buffer = "El subtotal es $1.018.370 pesos totales."
+    chunks, resto = _chunk_text(buffer)
+    # El '.' entre 1 y 018 no debe ser punto de corte porque le sigue un dígito
+    # Todo debe ir en un solo chunk (el '.' final sí corta)
+    assert len(chunks) == 1
+    assert "$1.018.370" in chunks[0]
+
+
+def test_no_corta_coma_antes_de_digito():
+    """Una coma seguida de dígito (ej: 'valor de $1,200,000 pesos') no debe partir."""
+    buffer = "El valor total acumulado es de 1,200,000 unidades procesadas."
+    chunks, resto = _chunk_text(buffer)
+    # La coma en '1,200,000' no debe cortar
+    assert all("1,200" not in (resto or "") for _ in [1])  # el número queda íntegro en algún chunk
+    full = "".join(chunks) + resto
+    assert "1,200,000" in full

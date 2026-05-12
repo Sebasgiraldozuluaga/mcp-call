@@ -63,7 +63,7 @@ async def test_streaming_sin_tools_produce_chunks():
     with patch("agent.async_client") as mock_client:
         mock_client.beta.messages.stream.return_value = FakeStream()
         history = []
-        in_tok, out_tok = await get_agent_response_streaming(
+        in_tok, out_tok, assistant_content = await get_agent_response_streaming(
             "cuántas facturas hay", history, FakeQueue()
         )
 
@@ -73,7 +73,9 @@ async def test_streaming_sin_tools_produce_chunks():
     # Al menos un chunk de texto antes del sentinel
     text_items = [i for i in items_recibidos if isinstance(i, str) and i != _TOOL_USE_SENTINEL]
     assert len(text_items) >= 1
-    assert len(history) == 2  # user + assistant
+    # El historial dentro de la función solo tiene el user (assistant lo agrega main.py)
+    assert len(history) == 1  # solo user
+    assert assistant_content is not None
 
 
 @pytest.mark.asyncio
@@ -107,7 +109,7 @@ async def test_sentinel_none_siempre_se_envia_en_error():
     with patch("agent.async_client") as mock_client:
         mock_client.beta.messages.stream.return_value = BrokenStream()
         history = []
-        in_tok, out_tok = await get_agent_response_streaming(
+        in_tok, out_tok, assistant_content = await get_agent_response_streaming(
             "pregunta que falla", history, FakeQueue()
         )
 
