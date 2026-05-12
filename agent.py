@@ -13,6 +13,7 @@ import json
 import os
 import re
 import time
+import traceback
 from pathlib import Path
 
 from anthropic import AsyncAnthropic
@@ -421,6 +422,9 @@ async def get_agent_response_streaming(
     total_input_tokens = 0
     total_output_tokens = 0
     messages = list(history)
+    # beta.messages.stream() no serializa BetaAsyncFunctionTool directamente;
+    # hay que convertirlos a dict con .to_dict() antes de pasarlos a la API.
+    raw_tools = [t.to_dict() for t in _mcp_tools]
 
     try:
         while True:
@@ -428,7 +432,7 @@ async def get_agent_response_streaming(
                 model="claude-sonnet-4-6",
                 max_tokens=512,
                 system=SYSTEM_PROMPT,
-                tools=_mcp_tools,
+                tools=raw_tools,
                 messages=messages,
             ) as stream:
                 async for event in stream:
@@ -511,6 +515,7 @@ async def get_agent_response_streaming(
         print(f"{'='*60}\n")
 
     except Exception as e:
+        traceback.print_exc()
         print(f"[Agente streaming] Error: {e}")
         await text_queue.put("Lo siento, hubo un error procesando tu solicitud.")
     finally:
