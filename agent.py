@@ -7,6 +7,7 @@ Flujo:
   3. get_agent_response()  →  loop tool_runner hasta end_turn
   4. close_mcp()  →  cierra todos los procesos MCP al apagar el servidor
 """
+import asyncio
 import contextlib
 import json
 import os
@@ -68,6 +69,9 @@ def _chunk_text(buffer: str, flush: bool = False) -> tuple[list[str], str]:
 
     return chunks, resto
 
+
+# Sentinel especial para indicar que hay tool_use en progreso
+_TOOL_USE_SENTINEL = "__TOOL_USE__"
 
 # Paso 1: dinero con $ → "X pesos"
 _MONEY_RE = re.compile(r'\$\s*([\d.,]+)')
@@ -385,3 +389,131 @@ async def get_agent_response(user_text: str, history: list) -> tuple[str, int, i
 
     print(f"[Agente] Sin respuesta ({t_total:.2f}s)")
     return "Lo siento, no pude procesar tu solicitud.", total_input_tokens, total_output_tokens
+
+
+
+
+async def get_agent_response_streaming(
+    user_text: str,
+    history: list,
+    text_queue: asyncio.Queue,
+) -> tuple[int, int]:
+    """Consulta Claude en modo streaming y envía chunks de texto a text_queue.
+
+    Mientras Claude genera texto, lo acumula en un buffer y lo corta en
+    chunks usando _chunk_text (pausas naturales: . ? ! , ;).
+
+    Señales enviadas a text_queue:
+    - str: chunk de texto listo para TTS
+    - _TOOL_USE_SENTINEL: Claude está ejecutando una tool (activar tono de espera)
+    - None: fin de la respuesta (sentinel)
+
+    Returns:
+        (input_tokens, output_tokens)
+    """
+    t_start = time.perf_counter()
+    print(f"\n{'='*60}")
+    print(f"[Agente streaming] Pregunta: {user_text!r}")
+
+    history.append({"role": "user", "content": user_text})
+
+    buffer = ""
+    total_input_tokens = 0
+    total_output_tokens = 0
+    messages = list(history)
+
+    try:
+        while True:
+            async with async_client.messages.stream(
+                model="claude-sonnet-4-6",
+                max_tokens=512,
+                system=SYSTEM_PROMPT,
+                tools=_mcp_tools,
+                messages=messages,
+            ) as stream:
+                async for event in stream:
+                    if not hasattr(event, "type"):
+                        continue
+
+                    if event.type == "content_block_start":
+                        block = getattr(event, "content_block", None)
+                        if block and getattr(block, "type", "") == "tool_use":
+                            # Flush buffer acumulado antes del tool
+                            if buffer.strip():
+                                chunks, buffer = _chunk_text(buffer, flush=True)
+                                for chunk in chunks:
+                                    await text_queue.put(format_for_tts(chunk))
+                            await text_queue.put(_TOOL_USE_SENTINEL)
+
+                    elif event.type == "content_block_delta":
+                        delta = getattr(event, "delta", None)
+                        if not delta:
+                            continue
+                        if getattr(delta, "type", "") == "text_delta":
+                            text_piece = delta.text
+                            buffer += text_piece
+                            chunks, buffer = _chunk_text(buffer)
+                            for chunk in chunks:
+                                await text_queue.put(format_for_tts(chunk))
+
+                final_msg = await stream.get_final_message()
+
+            if hasattr(final_msg, "usage") and final_msg.usage:
+                total_input_tokens += getattr(final_msg.usage, "input_tokens", 0)
+                total_output_tokens += getattr(final_msg.usage, "output_tokens", 0)
+
+            if final_msg.stop_reason == "tool_use":
+                # Ejecutar tool calls y continuar con los resultados
+                tool_results = []
+                for block in final_msg.content:
+                    if not hasattr(block, "type") or block.type != "tool_use":
+                        continue
+                    tool_name = block.name
+                    tool_input = block.input
+                    tool_id = block.id
+                    print(f"  [tool_use streaming] {tool_name}")
+                    tool_fn = next((t for t in _mcp_tools if t.name == tool_name), None)
+                    if tool_fn is None:
+                        result_content = f"Error: tool '{tool_name}' not found"
+                    else:
+                        try:
+                            result = await tool_fn(**tool_input)
+                            result_content = str(result)
+                            print(f"  [tool_result] {result_content[:200]}")
+                        except Exception as e:
+                            result_content = f"Error ejecutando {tool_name}: {e}"
+                    tool_results.append({
+                        "type": "tool_result",
+                        "tool_use_id": tool_id,
+                        "content": result_content,
+                    })
+
+                messages = messages + [
+                    {"role": "assistant", "content": final_msg.content},
+                    {"role": "user", "content": tool_results},
+                ]
+                continue
+            else:
+                # end_turn: respuesta completa
+                break
+
+        # Flush del buffer restante
+        if buffer.strip():
+            chunks, _ = _chunk_text(buffer, flush=True)
+            for chunk in chunks:
+                await text_queue.put(format_for_tts(chunk))
+
+        # Actualizar historial con respuesta completa
+        history.append({"role": "assistant", "content": final_msg.content})
+
+        t_total = time.perf_counter() - t_start
+        print(f"[Agente streaming] Completado ({t_total:.2f}s) tokens in={total_input_tokens} out={total_output_tokens}")
+        print(f"{'='*60}\n")
+
+    except Exception as e:
+        print(f"[Agente streaming] Error: {e}")
+        await text_queue.put("Lo siento, hubo un error procesando tu solicitud.")
+    finally:
+        await text_queue.put(None)  # sentinel de fin siempre
+
+    return total_input_tokens, total_output_tokens
