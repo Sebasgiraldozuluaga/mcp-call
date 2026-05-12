@@ -473,7 +473,9 @@ async def get_agent_response_streaming(
                             if buffer.strip():
                                 chunks, buffer = _chunk_text(buffer, flush=True)
                                 for chunk in chunks:
-                                    await text_queue.put(format_for_tts(chunk))
+                                    _tts_in = format_for_tts(chunk)
+                                    print(f"[TTS input] {_tts_in!r}")
+                                    await text_queue.put(_tts_in)
                             await text_queue.put(_TOOL_USE_SENTINEL)
 
                     elif event.type == "content_block_delta":
@@ -485,7 +487,9 @@ async def get_agent_response_streaming(
                             buffer += text_piece
                             chunks, buffer = _chunk_text(buffer)
                             for chunk in chunks:
-                                await text_queue.put(format_for_tts(chunk))
+                                _tts_in = format_for_tts(chunk)
+                                print(f"[TTS input] {_tts_in!r}")
+                                await text_queue.put(_tts_in)
 
                 final_msg = await stream.get_final_message()
 
@@ -532,7 +536,9 @@ async def get_agent_response_streaming(
         if buffer.strip():
             chunks, _ = _chunk_text(buffer, flush=True)
             for chunk in chunks:
-                await text_queue.put(format_for_tts(chunk))
+                _tts_in = format_for_tts(chunk)
+                print(f"[TTS input] {_tts_in!r}")
+                await text_queue.put(_tts_in)
 
         # Actualizar historial con respuesta completa
         history.append({"role": "assistant", "content": final_msg.content})
