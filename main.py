@@ -692,8 +692,8 @@ async def send_tts_streaming(
 # ElevenLabs confunde palabras por su sonido, no por su ortografía.
 # Cada entrada: (regex_pattern, reemplazo) — se aplican en orden.
 _STT_CORRECTIONS = [
-    # nómina / nomina — se confunde con "mina", "nominal", "minima", "numero"
-    (r'\b(no[mn]i?na[sz]?|nominas?|nomima[sz]?|n[oó]minas?)\b', 'nómina'),
+    # nómina / nomina — variantes fonéticas de audio telefónico 8 kHz
+    (r'\b(n[oó]m[ie]n[aáeé][sz]?|nomim[ao]s?|nomin[aáeéií]s?|n[oó]minas?|nomenas?|nomiñas?|nominás?|nómines?)\b', 'nómina'),
     # quincena — se confunde con "quincenal", "quincenera"
     (r'\bquincen[ae]r?a?\b', 'quincena'),
     # factura/s — generalmente bien pero a veces "fractura"
@@ -744,6 +744,7 @@ async def transcribe(audio_bytes: bytes) -> str:
             )
             response.raise_for_status()
             text = response.json().get("text", "").strip()
+            print(f"STT raw: {text}")
             text = _fix_transcription(text)
             print(f"STT: {text}")
             return text
