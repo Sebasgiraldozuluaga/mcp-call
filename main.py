@@ -338,8 +338,10 @@ async def media_stream(websocket: WebSocket, call_sid: str = Query("")):
 
             user_text = await transcribe(captured)
             if not user_text or len(user_text.strip()) < 3:
+                print(f"[handle_speech] texto vacío/corto, ignorado")
                 return
             print(f"Usuario: {user_text}")
+            print(f"[estado] busy={busy.is_set()} playing={playing.is_set()} tts_stop={tts_stop.is_set()} gen={gen} task_gen={task_gen}")
 
             if not ws_open or not stream_sid:
                 return
@@ -348,6 +350,7 @@ async def media_stream(websocket: WebSocket, call_sid: str = Query("")):
             thinking_stop.set()  # ya seteado = sin tono ni "un momento"
             tts_stop.clear()
             playing.set()
+            print(f"[handle_speech] iniciando agente (gen={gen})")
 
             # ── Lanzar agente streaming ──
             text_queue: asyncio.Queue = asyncio.Queue()
@@ -383,14 +386,16 @@ async def media_stream(websocket: WebSocket, call_sid: str = Query("")):
                 pass
 
         except asyncio.CancelledError:
-            print("[barge-in] Respuesta del agente cancelada por el usuario")
+            print(f"[barge-in] Respuesta del agente cancelada por el usuario (gen={gen})")
             raise
         except Exception as e:
             print(f"Error en handle_speech: {e}")
+            import traceback; traceback.print_exc()
         finally:
             playing.clear()
             if task_gen == gen:
                 busy.clear()
+            print(f"[handle_speech finally] gen={gen} task_gen={task_gen} busy_cleared={task_gen==gen} busy={busy.is_set()} playing={playing.is_set()}")
 
     try:
         async for raw in websocket.iter_text():
@@ -445,6 +450,8 @@ async def media_stream(websocket: WebSocket, call_sid: str = Query("")):
                 # ── VAD: captura voz cuando no estamos ocupados ni reproduciendo ──
                 if not busy.is_set() and not playing.is_set():
                     if rms > SILENCE_THRESHOLD:
+                        if not speaking:
+                            print(f"[VAD] inicio voz rms={rms}")
                         speaking = True
                         silent_chunks = 0
                         audio_buffer.extend(mulaw_chunk)
@@ -459,6 +466,7 @@ async def media_stream(websocket: WebSocket, call_sid: str = Query("")):
                                 audio_buffer.clear()
                                 speaking = False
                                 silent_chunks = 0
+                                print(f"[VAD] fin voz → handle_speech gen={task_gen} buf={len(captured)}b")
                                 busy.set()
                                 current_task = asyncio.create_task(
                                     handle_speech(captured, task_gen)
@@ -467,6 +475,9 @@ async def media_stream(websocket: WebSocket, call_sid: str = Query("")):
                                 audio_buffer.clear()
                                 speaking = False
                                 silent_chunks = 0
+                else:
+                    if rms > SILENCE_THRESHOLD and not playing.is_set():
+                        print(f"[VAD] voz ignorada busy={busy.is_set()} playing={playing.is_set()} rms={rms}")
 
             # ── Fin del stream ─────────────────────────────────────────────
             elif event == "stop":
