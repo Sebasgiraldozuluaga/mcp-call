@@ -28,7 +28,7 @@ from telegram.ext import Application, CommandHandler, ContextTypes
 from twilio.rest import Client as TwilioClient
 from twilio.twiml.voice_response import Connect, VoiceResponse
 
-from agent import close_mcp, get_agent_response, init_mcp
+from agent import close_mcp, get_agent_response, get_agent_response_streaming, init_mcp
 from audio_utils import compute_rms, generate_thinking_tone, mulaw_decode, mulaw_encode, mulaw_to_wav
 
 # ---------------------------------------------------------------------------
@@ -302,7 +302,7 @@ async def media_stream(websocket: WebSocket, call_sid: str = Query("")):
     ws_open = True            # False cuando el WebSocket se cierra
 
     async def handle_speech(captured: bytes, gen: int):
-        """Transcribe, consulta al agente y responde con TTS."""
+        """Transcribe, consulta al agente y responde con TTS streaming."""
         nonlocal session
         try:
             session.stt_audio_seconds += len(captured) / 8000.0
@@ -312,17 +312,82 @@ async def media_stream(websocket: WebSocket, call_sid: str = Query("")):
                 return
             print(f"Usuario: {user_text}")
 
-            response_text, in_tok, out_tok = await get_agent_response(user_text, conversation_history)
-            session.claude_input_tokens += in_tok
-            session.claude_output_tokens += out_tok
-            print(f"Agente:  {response_text}")
-
-            if not ws_open:
+            if not ws_open or not stream_sid:
                 return
+
+            # ── Feedback inmediato: tono local + "un momento" en background ──
+            thinking_stop = asyncio.Event()
             tts_stop.clear()
             playing.set()
-            session.tts_chars += len(response_text)
-            await send_tts(websocket, stream_sid, response_text, tts_stop)
+
+            # Lanzar tono de pensamiento local (instantáneo, sin red)
+            thinking_task = asyncio.create_task(
+                send_thinking_tone(websocket, stream_sid, thinking_stop)
+            )
+
+            # Lanzar TTS de "un momento" en background mientras Claude procesa
+            async def play_um():
+                """Genera y reproduce 'un momento' via TTS en background."""
+                try:
+                    um_bytes = await asyncio.to_thread(
+                        lambda: b"".join(elevenlabs.text_to_speech.convert(
+                            text="Un momento.",
+                            voice_id=os.environ["ELEVENLABS_VOICE_ID"],
+                            model_id="eleven_turbo_v2_5",
+                            output_format="ulaw_8000",
+                        ))
+                    )
+                    # Solo reproducir si el agente no respondió antes de que esto termine
+                    if not thinking_stop.is_set() and not tts_stop.is_set():
+                        thinking_stop.set()  # detener tono local
+                        await asyncio.sleep(0.05)  # pequeño gap
+                        for i in range(0, len(um_bytes), CHUNK_BYTES):
+                            if tts_stop.is_set():
+                                break
+                            chunk = um_bytes[i: i + CHUNK_BYTES]
+                            await websocket.send_json({
+                                "event": "media",
+                                "streamSid": stream_sid,
+                                "media": {"payload": base64.b64encode(chunk).decode()},
+                            })
+                        thinking_stop.set()  # asegurar que está seteado
+                except Exception as e:
+                    print(f"[un momento TTS] Error: {e}")
+                    thinking_stop.set()
+
+            um_task = asyncio.create_task(play_um())
+
+            # ── Lanzar agente streaming ──
+            text_queue: asyncio.Queue = asyncio.Queue()
+            agent_task = asyncio.create_task(
+                get_agent_response_streaming(user_text, conversation_history, text_queue)
+            )
+
+            # ── Consumir chunks y enviar TTS streaming ──
+            session.tts_chars += await send_tts_streaming(
+                websocket, stream_sid, text_queue,
+                stop=tts_stop,
+                thinking_stop=thinking_stop,
+            )
+
+            # Obtener tokens del agente
+            try:
+                in_tok, out_tok = await asyncio.wait_for(agent_task, timeout=60.0)
+                session.claude_input_tokens += in_tok
+                session.claude_output_tokens += out_tok
+            except asyncio.TimeoutError:
+                print("[handle_speech] Timeout esperando agente")
+            except asyncio.CancelledError:
+                pass
+
+            # Cancelar tareas de feedback si aún corren
+            for t in (thinking_task, um_task):
+                if not t.done():
+                    t.cancel()
+                    try:
+                        await t
+                    except (asyncio.CancelledError, Exception):
+                        pass
 
         except asyncio.CancelledError:
             print("[barge-in] Respuesta del agente cancelada por el usuario")
@@ -528,6 +593,106 @@ async def send_thinking_tone(websocket: WebSocket, stream_sid: str | None, stop:
     except Exception:
         pass
 
+
+
+async def send_tts_streaming(
+    websocket: WebSocket,
+    stream_sid: str | None,
+    text_queue: asyncio.Queue,
+    stop: asyncio.Event | None = None,
+    thinking_stop: asyncio.Event | None = None,
+) -> int:
+    """Consume chunks de text_queue y los convierte a TTS streaming hacia Twilio.
+
+    Detiene el tono de pensamiento cuando llega el primer chunk de texto real.
+    Soporta barge-in via stop event.
+
+    Returns:
+        Total de caracteres enviados a TTS (para billing).
+    """
+    from agent import _TOOL_USE_SENTINEL
+
+    if not stream_sid:
+        return 0
+
+    total_chars = 0
+    thinking_stopped = False
+
+    while True:
+        try:
+            item = await asyncio.wait_for(text_queue.get(), timeout=30.0)
+        except asyncio.TimeoutError:
+            print("[send_tts_streaming] Timeout esperando chunk")
+            break
+
+        if item is None:
+            # Sentinel de fin
+            break
+
+        if item == _TOOL_USE_SENTINEL:
+            # Claude está ejecutando tool; el tono de pensamiento ya está corriendo
+            continue
+
+        if stop and stop.is_set():
+            # Barge-in: drenar la queue y salir
+            while not text_queue.empty():
+                text_queue.get_nowait()
+            break
+
+        # Primer chunk de texto real: detener tono de pensamiento
+        if not thinking_stopped and thinking_stop:
+            thinking_stop.set()
+            thinking_stopped = True
+
+        chunk_text = item
+        total_chars += len(chunk_text)
+
+        try:
+            audio_gen = elevenlabs.text_to_speech.stream(
+                text=chunk_text,
+                voice_id=os.environ["ELEVENLABS_VOICE_ID"],
+                model_id="eleven_turbo_v2_5",
+                output_format="ulaw_8000",
+            )
+            for audio_chunk in audio_gen:
+                if stop and stop.is_set():
+                    break
+                if not audio_chunk:
+                    continue
+                await websocket.send_json({
+                    "event": "media",
+                    "streamSid": stream_sid,
+                    "media": {"payload": base64.b64encode(audio_chunk).decode()},
+                })
+        except Exception as e:
+            print(f"[send_tts_streaming] Error TTS chunk: {e}")
+            # Fallback: gTTS para este chunk
+            try:
+                audio_bytes = await asyncio.to_thread(_gtts_to_mulaw, chunk_text)
+                for i in range(0, len(audio_bytes), CHUNK_BYTES):
+                    if stop and stop.is_set():
+                        break
+                    chunk = audio_bytes[i: i + CHUNK_BYTES]
+                    await websocket.send_json({
+                        "event": "media",
+                        "streamSid": stream_sid,
+                        "media": {"payload": base64.b64encode(chunk).decode()},
+                    })
+            except Exception as e2:
+                print(f"[send_tts_streaming] Fallback gTTS falló: {e2}")
+
+    # Enviar mark de fin si no hubo barge-in
+    if not (stop and stop.is_set()):
+        try:
+            await websocket.send_json({
+                "event": "mark",
+                "streamSid": stream_sid,
+                "mark": {"name": "tts_end"},
+            })
+        except Exception:
+            pass
+
+    return total_chars
 
 
 # Correcciones post-STT: mapea variantes fonéticas → término correcto.
