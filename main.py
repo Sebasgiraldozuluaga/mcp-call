@@ -173,8 +173,8 @@ async def _cmd_call(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 # Parámetros de VAD (Voice Activity Detection)
 # ---------------------------------------------------------------------------
 SILENCE_THRESHOLD = 500   # RMS para detectar voz
-BARGEIN_THRESHOLD = 1200  # RMS para barge-in (solo voz clara interrumpe)
-BARGEIN_CONFIRM = 2       # Chunks consecutivos para confirmar barge-in (40 ms)
+BARGEIN_THRESHOLD = 2000  # RMS para barge-in (solo voz clara interrumpe)
+BARGEIN_CONFIRM = 4       # Chunks consecutivos para confirmar barge-in (80 ms)
 SILENCE_CHUNKS = 50       # 50 × 20 ms = 1.0 s de silencio → procesar
 MIN_SPEECH_CHUNKS = 12    # Ignorar buffers < 240 ms (ruido / golpes)
 CHUNK_BYTES = 160         # 160 bytes = 20 ms a 8 kHz μ-law
