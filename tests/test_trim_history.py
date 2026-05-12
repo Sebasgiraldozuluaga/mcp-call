@@ -68,3 +68,17 @@ def test_first_message_is_most_recent_when_trimmed():
     result = _trim_history(h)
     # Should keep last 8 turns (16 messages) → turns 2-9 kept, turns 0-1 dropped
     assert result[0]["content"] == "pregunta 2"
+
+
+def test_trim_history_handles_pydantic_blocks():
+    """_trim_history must not crash when assistant content blocks are Pydantic objects (ParsedBetaTextBlock)."""
+    from anthropic.types import TextBlock
+
+    pydantic_block = TextBlock(type="text", text="respuesta bonita")
+    h = [
+        {"role": "user", "content": "pregunta"},
+        {"role": "assistant", "content": [pydantic_block]},
+    ]
+    # Should NOT raise AttributeError: 'TextBlock' object has no attribute 'get'
+    result = _trim_history(h)
+    assert len(result) == 2

@@ -198,6 +198,9 @@ def _trim_history(history: list) -> list:
         content = msg.get("content")
         if isinstance(content, list):
             for block in content:
+                if not isinstance(block, dict):
+                    # Pydantic SDK objects (e.g. ParsedBetaTextBlock) — skip truncation
+                    continue
                 if block.get("type") == "tool_result":
                     raw = block.get("content")
                     if isinstance(raw, str) and len(raw) > MAX_TOOL_RESULT_CHARS:
@@ -366,6 +369,12 @@ async def media_stream(websocket: WebSocket, call_sid: str = Query("")):
                 session.claude_output_tokens += out_tok
                 # Actualizar historial ORIGINAL (no el trimmed copy) para mantener contexto
                 if assistant_content is not None:
+                    # Serialize Pydantic SDK blocks to plain dicts before storing
+                    if isinstance(assistant_content, list):
+                        assistant_content = [
+                            b.model_dump() if hasattr(b, "model_dump") else b
+                            for b in assistant_content
+                        ]
                     conversation_history.append({"role": "user", "content": user_text})
                     conversation_history.append({"role": "assistant", "content": assistant_content})
             except asyncio.TimeoutError:
