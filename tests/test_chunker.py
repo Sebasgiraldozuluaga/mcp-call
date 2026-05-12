@@ -63,3 +63,9 @@ def test_flush_vacio():
     chunks, resto = _chunk_text("", flush=True)
     assert chunks == []
     assert resto == ""
+
+
+def test_flush_whitespace_only():
+    chunks, resto = _chunk_text("   ", flush=True)
+    assert chunks == []
+    assert resto == ""

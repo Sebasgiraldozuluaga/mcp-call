@@ -61,8 +61,9 @@ def _chunk_text(buffer: str, flush: bool = False) -> tuple[list[str], str]:
 
     resto = buffer[start:]
 
-    if flush and resto.strip():
-        chunks.append(resto)
+    if flush:
+        if resto.strip():
+            chunks.append(resto)
         resto = ""
 
     return chunks, resto
