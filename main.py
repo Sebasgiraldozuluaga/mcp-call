@@ -8,6 +8,7 @@ Flujo:
 """
 import asyncio
 import base64
+import copy
 import json
 import math
 import os
@@ -188,7 +189,6 @@ def _trim_history(history: list) -> list:
       saturating the context window with raw SQL output.
     - Never mutates the original list.
     """
-    import copy
     MAX_MESSAGES = 16
     MAX_TOOL_RESULT_CHARS = 400
 
