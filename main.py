@@ -29,7 +29,7 @@ from twilio.rest import Client as TwilioClient
 from twilio.twiml.voice_response import Connect, VoiceResponse
 
 from agent import close_mcp, get_agent_response, init_mcp
-from audio_utils import compute_rms, mulaw_decode, mulaw_encode, mulaw_to_wav
+from audio_utils import compute_rms, generate_thinking_tone, mulaw_decode, mulaw_encode, mulaw_to_wav
 
 # ---------------------------------------------------------------------------
 # Clientes externos
@@ -175,7 +175,7 @@ async def _cmd_call(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 SILENCE_THRESHOLD = 500   # RMS para detectar voz
 BARGEIN_THRESHOLD = 1200  # RMS para barge-in (solo voz clara interrumpe)
 BARGEIN_CONFIRM = 2       # Chunks consecutivos para confirmar barge-in (40 ms)
-SILENCE_CHUNKS = 70       # 70 × 20 ms = 1.4 s de silencio → procesar
+SILENCE_CHUNKS = 50       # 50 × 20 ms = 1.0 s de silencio → procesar
 MIN_SPEECH_CHUNKS = 12    # Ignorar buffers < 240 ms (ruido / golpes)
 CHUNK_BYTES = 160         # 160 bytes = 20 ms a 8 kHz μ-law
 
@@ -496,6 +496,35 @@ async def send_tts(
                 "streamSid": stream_sid,
                 "mark": {"name": "tts_end"},
             })
+    except Exception:
+        pass
+
+
+async def send_thinking_tone(websocket: WebSocket, stream_sid: str | None, stop: asyncio.Event | None = None) -> None:
+    """Envía el tono do-mi-sol local en loop mientras se procesa.
+    
+    Llama a generate_thinking_tone() localmente (sin red) y envía los chunks
+    a Twilio. Repite el tono en loop hasta que stop se setee.
+    """
+    if not stream_sid:
+        return
+    tone_bytes = generate_thinking_tone()
+    try:
+        while True:
+            for i in range(0, len(tone_bytes), CHUNK_BYTES):
+                if stop and stop.is_set():
+                    return
+                chunk = tone_bytes[i: i + CHUNK_BYTES]
+                await websocket.send_json({
+                    "event": "media",
+                    "streamSid": stream_sid,
+                    "media": {"payload": base64.b64encode(chunk).decode()},
+                })
+            # Pausa de 0.3s entre repeticiones del tono
+            for _ in range(15):  # 15 × 20ms = 300ms
+                if stop and stop.is_set():
+                    return
+                await asyncio.sleep(0.02)
     except Exception:
         pass
 
