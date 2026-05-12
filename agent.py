@@ -83,13 +83,41 @@ _NUMBER_RE = re.compile(r'[\d]{1,3}(?:[.,]\d{3})+(?:[.,]\d{1,2})?|[\d]+')
 def _parse_number(raw: str) -> int | None:
     """Parsea una cadena numérica a entero, quitando separadores de miles."""
     clean = raw.strip()
-    # Quitar decimales finales (.XX o ,XX)
+    # Detect Colombian/European format: dots as thousands separators only
+    # Pattern: digits in groups of 3 separated by dots, no trailing decimals
+    import re as _re
+    if _re.match(r'^\d{1,3}(\.\d{3})+$', clean):
+        return int(clean.replace('.', ''))
+    # Remove trailing decimal part (.XX or ,XX where XX is 1-2 digits)
     clean = re.sub(r'[.,]\d{1,2}$', '', clean)
     clean = clean.replace('.', '').replace(',', '')
     try:
         return int(clean)
     except ValueError:
         return None
+
+
+def _approx_for_tts(valor: int) -> str:
+    """Aproxima números grandes a millones/miles para que suenen naturales en voz.
+
+    >= 1.000.000  → redondea al 100.000 más cercano  → "un millón doscientos mil"
+    >= 10.000     → redondea al 1.000 más cercano     → "cuarenta y seis mil"
+    < 10.000      → exacto                            → "cuatro mil quinientos"
+    """
+    if valor >= 1_000_000:
+        centenas = round(valor / 100_000)
+        millones_enteros = centenas // 10
+        resto_centenas = centenas % 10
+        if resto_centenas == 0:
+            return "un millón" if millones_enteros == 1                 else num2words(millones_enteros, lang='es') + " millones"
+        resto_pesos = resto_centenas * 100_000
+        millon_str = "un millón" if millones_enteros == 1             else num2words(millones_enteros, lang='es') + " millones"
+        return millon_str + " " + num2words(resto_pesos, lang='es')
+    elif valor >= 10_000:
+        approx = round(valor / 1000) * 1000
+        return num2words(approx, lang='es')
+    else:
+        return num2words(valor, lang='es')
 
 
 def format_for_tts(text: str) -> str:
@@ -107,7 +135,7 @@ def format_for_tts(text: str) -> str:
         valor = _parse_number(m.group(1))
         if valor is None or valor < 0:
             return m.group(0)
-        return f"{num2words(valor, lang='es')} pesos"
+        return f"{_approx_for_tts(valor)} pesos"
 
     def replace_number(m: re.Match) -> str:
         valor = _parse_number(m.group(0))
