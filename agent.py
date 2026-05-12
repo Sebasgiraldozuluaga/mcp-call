@@ -424,7 +424,7 @@ async def get_agent_response_streaming(
 
     try:
         while True:
-            async with async_client.messages.stream(
+            async with async_client.beta.messages.stream(
                 model="claude-sonnet-4-6",
                 max_tokens=512,
                 system=SYSTEM_PROMPT,

@@ -61,7 +61,7 @@ async def test_streaming_sin_tools_produce_chunks():
             return mock_final_msg
 
     with patch("agent.async_client") as mock_client:
-        mock_client.messages.stream.return_value = FakeStream()
+        mock_client.beta.messages.stream.return_value = FakeStream()
         history = []
         in_tok, out_tok = await get_agent_response_streaming(
             "cuántas facturas hay", history, FakeQueue()
@@ -105,7 +105,7 @@ async def test_sentinel_none_siempre_se_envia_en_error():
             return MagicMock()
 
     with patch("agent.async_client") as mock_client:
-        mock_client.messages.stream.return_value = BrokenStream()
+        mock_client.beta.messages.stream.return_value = BrokenStream()
         history = []
         in_tok, out_tok = await get_agent_response_streaming(
             "pregunta que falla", history, FakeQueue()
