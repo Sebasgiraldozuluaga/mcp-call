@@ -179,6 +179,32 @@ SILENCE_CHUNKS = 50       # 50 × 20 ms = 1.0 s de silencio → procesar
 MIN_SPEECH_CHUNKS = 12    # Ignorar buffers < 240 ms (ruido / golpes)
 CHUNK_BYTES = 160         # 160 bytes = 20 ms a 8 kHz μ-law
 
+
+def _trim_history(history: list) -> list:
+    """Returns a trimmed copy of conversation_history for API calls.
+
+    - Keeps the last 16 messages (8 user+assistant turn pairs).
+    - Truncates any tool_result content block > 400 chars to avoid
+      saturating the context window with raw SQL output.
+    - Never mutates the original list.
+    """
+    import copy
+    MAX_MESSAGES = 16
+    MAX_TOOL_RESULT_CHARS = 400
+
+    trimmed = copy.deepcopy(history[-MAX_MESSAGES:])
+
+    for msg in trimmed:
+        content = msg.get("content")
+        if isinstance(content, list):
+            for block in content:
+                if block.get("type") == "tool_result":
+                    raw = block.get("content")
+                    if isinstance(raw, str) and len(raw) > MAX_TOOL_RESULT_CHARS:
+                        block["content"] = raw[:MAX_TOOL_RESULT_CHARS] + "..."
+    return trimmed
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Arranca el MCP y el bot de Telegram al iniciar; los cierra al apagar."""
@@ -360,7 +386,7 @@ async def media_stream(websocket: WebSocket, call_sid: str = Query("")):
             # ── Lanzar agente streaming ──
             text_queue: asyncio.Queue = asyncio.Queue()
             agent_task = asyncio.create_task(
-                get_agent_response_streaming(user_text, conversation_history, text_queue)
+                get_agent_response_streaming(user_text, _trim_history(conversation_history), text_queue)
             )
 
             # ── Consumir chunks y enviar TTS streaming ──
