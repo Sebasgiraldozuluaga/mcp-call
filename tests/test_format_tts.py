@@ -1,5 +1,5 @@
 import pytest
-from agent import _parse_number, format_for_tts
+from agent import _parse_number, _approx_for_tts, format_for_tts
 
 
 # --- _parse_number ---
@@ -50,7 +50,8 @@ def test_exact_million():
 
 def test_thousands_range():
     result = format_for_tts("$45.678")
-    assert "cuarenta" in result or "cuarenta y seis" in result, f"Got: {result}"
+    assert "mil" in result, f"Expected thousands in result, got: {result}"
+    assert "cuarenta" in result, f"Got: {result}"
     assert "pesos" in result
 
 def test_small_exact():
@@ -60,3 +61,27 @@ def test_small_exact():
 def test_no_dollar_number():
     result = format_for_tts("67 facturas")
     assert "sesenta y siete facturas" == result, f"Got: {result}"
+
+
+# --- _approx_for_tts direct tests ---
+
+def test_approx_exact_million():
+    assert _approx_for_tts(1_000_000) == "un millón"
+
+def test_approx_million_with_remainder():
+    result = _approx_for_tts(1_234_567)
+    assert "millón" in result
+    assert "doscientos" in result  # 200k remainder
+
+def test_approx_999999_stays_below_million():
+    result = _approx_for_tts(999_999)
+    assert "millón" not in result, f"999999 should not round up to millón, got: {result}"
+    assert "mil" in result
+
+def test_approx_thousands():
+    result = _approx_for_tts(45_678)
+    assert "cuarenta" in result
+    assert "mil" in result
+
+def test_approx_small_exact():
+    assert _approx_for_tts(4_500) == "cuatro mil quinientos"

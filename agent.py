@@ -113,7 +113,7 @@ def _approx_for_tts(valor: int) -> str:
         millon_str = "un millón" if millones_enteros == 1             else num2words(millones_enteros, lang='es') + " millones"
         return millon_str + " " + num2words(resto_pesos, lang='es')
     elif valor >= 10_000:
-        approx = round(valor / 1000) * 1000
+        approx = (valor // 1000) * 1000  # floor, not round — prevents crossing million boundary
         return num2words(approx, lang='es')
     else:
         return num2words(valor, lang='es')
